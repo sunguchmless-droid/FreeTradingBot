@@ -1,0 +1,1 @@
+"""FreeTradingBot source package."""
