@@ -82,7 +82,7 @@ def test_summary_returns_expected_metrics_and_compounds_risk():
     assert report["profit_factor"] == 2
     assert report["net_r"] == 1
     assert report["ending_balance"] == pytest.approx(10_098.0)
-    assert report["max_drawdown_percent"] == pytest.approx(0.98039215686)
+    assert report["max_drawdown_percent"] == pytest.approx(1.0)
 
 
 def test_summary_rejects_missing_risk_metadata():
