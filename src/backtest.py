@@ -156,10 +156,9 @@ def summarize_backtest(trades: pd.DataFrame, *, initial_balance: float = 10_000.
     peak_r = equity_r.cummax().clip(lower=0)
     drawdown_r = peak_r - equity_r
     risk_percent = float(trades["return_percent_of_risk"].iloc[0]) / float(results.iloc[0]) if results.iloc[0] != 0 else 0.01
-    ending_balance = initial_balance * (1 + risk_percent) ** 0  # replaced below with sequential compounding
     balance = initial_balance
     for r_value in results:
-        balance *= 1 + (risk_percent * float(r_value))
+        balance *= 1 + ((risk_percent / 100.0) * float(r_value))
     return {
         "trades": int(len(trades)),
         "win_rate_percent": float((results > 0).mean() * 100),
