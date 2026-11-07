@@ -100,3 +100,61 @@ def place_demo_trade(symbol: str, signal: str, atr: float) -> str:
         f"DEMO ORDER PLACED: {signal} {symbol}, volume={volume}, "
         f"entry={entry}, SL={stop}, TP={target}, order={result.order}"
     )
+
+
+def close_bot_positions_on_reverse_signal(symbol: str, signal: str) -> str:
+    """Close only this bot's own demo position when an opposite signal appears."""
+    if signal not in ("BUY", "SELL"):
+        return "No closing action: signal is HOLD."
+
+    account = mt5.account_info()
+    if account is None or account.trade_mode != mt5.ACCOUNT_TRADE_MODE_DEMO:
+        raise RuntimeError("SAFETY BLOCK: position management is permitted only on a DEMO account.")
+
+    positions = mt5.positions_get(symbol=symbol)
+    if positions is None:
+        raise RuntimeError(f"Could not check positions: {mt5.last_error()}")
+
+    messages = []
+    for position in positions:
+        if position.magic != MAGIC:
+            continue
+
+        opposite = (
+            (position.type == mt5.POSITION_TYPE_BUY and signal == "SELL")
+            or (position.type == mt5.POSITION_TYPE_SELL and signal == "BUY")
+        )
+        if not opposite:
+            continue
+
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is None:
+            raise RuntimeError(f"Could not get a fresh quote to close position {position.ticket}.")
+
+        close_type = mt5.ORDER_TYPE_SELL if position.type == mt5.POSITION_TYPE_BUY else mt5.ORDER_TYPE_BUY
+        close_price = tick.bid if close_type == mt5.ORDER_TYPE_SELL else tick.ask
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": symbol,
+            "position": position.ticket,
+            "volume": position.volume,
+            "type": close_type,
+            "price": close_price,
+            "deviation": DEVIATION_POINTS,
+            "magic": MAGIC,
+            "comment": "FreeTradingBot reverse-signal exit",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_IOC,
+        }
+        check = mt5.order_check(request)
+        if check is None or check.retcode != 0:
+            detail = "No response" if check is None else f"retcode={check.retcode}, comment={check.comment}"
+            raise RuntimeError(f"Close pre-check failed for {position.ticket}: {detail}")
+
+        result = mt5.order_send(request)
+        if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+            detail = mt5.last_error() if result is None else f"retcode={result.retcode}, comment={result.comment}"
+            raise RuntimeError(f"Could not confirm close for position {position.ticket}: {detail}")
+        messages.append(f"Closed bot position {position.ticket} after opposite {signal} signal.")
+
+    return " ".join(messages) if messages else "No bot position required closing."
