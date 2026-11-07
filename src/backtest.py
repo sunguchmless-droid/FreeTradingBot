@@ -1,7 +1,10 @@
 """Conservative, candle-based historical backtesting for the EMA/RSI strategy.
 
-This module never connects to MT5 and never places orders. Input candles must be
-chronological OHLC data with indicator columns added by src.indicators.
+This module never connects to MT5 and never places orders. Input candles must
+be chronological OHLC data with indicator columns added by src.indicators.
+
+Price convention: OHLC values are BID prices (as in typical MT5 Forex rates).
+Spread is added to BUY entries and SELL exits; it is not split in half.
 """
 from __future__ import annotations
 
@@ -22,12 +25,12 @@ def run_backtest(
     default_spread: float = 0.0001,
     point_size: float = 0.00001,
 ) -> pd.DataFrame:
-    """Simulate one position at a time; returns one row per completed trade.
+    """Simulate one position at a time; return one row per completed trade.
 
     Signals use a completed candle and entries occur at the following candle's
-    open. Spread is modeled as half-spread on each side of entry and exit.
-    If SL and TP are both touched within one candle, SL is assumed first.
-    PnL is expressed in R-multiples, not account currency.
+    open. OHLC is assumed to be BID data. BUY entries pay the ask (bid + spread);
+    SELL exits pay the ask. SL is assumed first when SL and TP are both touched
+    in one candle. A gap through a stop is filled at the worse opening price.
     """
     required = {"open", "high", "low", "close", "ema_20", "ema_50", "rsi_14", "atr_14"}
     missing = required.difference(candles.columns)
@@ -35,10 +38,14 @@ def run_backtest(
         raise ValueError(f"Missing required columns: {', '.join(sorted(missing))}")
     if len(candles) < 2:
         raise ValueError("At least 2 candles are required.")
-    if initial_balance <= 0 or not 0 < risk_percent <= 1:
-        raise ValueError("initial_balance must be positive and risk_percent must be in (0, 1].")
-    if default_spread < 0 or point_size <= 0:
-        raise ValueError("Spread must be non-negative and point_size must be positive.")
+    if not math.isfinite(initial_balance) or initial_balance <= 0:
+        raise ValueError("initial_balance must be positive and finite.")
+    if not math.isfinite(risk_percent) or not 0 < risk_percent <= 1:
+        raise ValueError("risk_percent must be in (0, 1] percent.")
+    if not math.isfinite(default_spread) or default_spread < 0:
+        raise ValueError("default_spread must be non-negative and finite.")
+    if not math.isfinite(point_size) or point_size <= 0:
+        raise ValueError("point_size must be positive and finite.")
 
     data = candles.reset_index(drop=True).copy()
     trades: list[dict] = []
@@ -59,9 +66,10 @@ def run_backtest(
 
         direction = 1 if signal == "BUY" else -1
         stop_distance = atr * ATR_STOP_MULTIPLIER
-        half_spread = _half_spread(entry_bar, default_spread, point_size)
-        raw_entry = float(entry_bar["open"])
-        entry = raw_entry + half_spread if direction == 1 else raw_entry - half_spread
+        entry_spread = _spread(entry_bar, default_spread, point_size)
+        raw_entry_bid = float(entry_bar["open"])
+        # BID OHLC: a BUY pays ask; a SELL enters at bid.
+        entry = raw_entry_bid + entry_spread if direction == 1 else raw_entry_bid
         stop = entry - direction * stop_distance
         target = entry + direction * stop_distance * REWARD_RISK_RATIO
 
@@ -71,38 +79,44 @@ def run_backtest(
 
         for j in range(entry_i, len(data)):
             bar = data.iloc[j]
-            bar_half_spread = _half_spread(bar, default_spread, point_size)
-            high = float(bar["high"])
-            low = float(bar["low"])
+            spread = _spread(bar, default_spread, point_size)
+            raw_open = float(bar["open"])
+            high_bid = float(bar["high"])
+            low_bid = float(bar["low"])
 
             if direction == 1:
-                stop_hit = low <= stop
-                target_hit = high >= target
+                stop_hit = low_bid <= stop
+                target_hit = high_bid >= target
             else:
-                # Short exits pay the ask, so add half-spread to OHLC.
-                stop_hit = high + 2 * bar_half_spread >= stop
-                target_hit = low + 2 * bar_half_spread <= target
+                high_ask = high_bid + spread
+                low_ask = low_bid + spread
+                stop_hit = high_ask >= stop
+                target_hit = low_ask <= target
 
             if stop_hit:
-                raw_exit = float(bar["open"])
                 if direction == 1:
-                    exit_price = min(stop, raw_exit) - bar_half_spread if raw_exit < stop else stop - bar_half_spread
+                    exit_price = min(stop, raw_open)
                 else:
-                    ask_open = raw_exit + 2 * bar_half_spread
-                    exit_price = max(stop, ask_open)
+                    exit_price = max(stop, raw_open + spread)
                 exit_reason = "stop_loss"
                 exit_i = j
                 break
+
             if target_hit:
-                exit_price = target - bar_half_spread if direction == 1 else target
+                if direction == 1:
+                    exit_price = max(target, raw_open) if raw_open > target else target
+                else:
+                    ask_open = raw_open + spread
+                    exit_price = min(target, ask_open) if ask_open < target else target
                 exit_reason = "take_profit"
                 exit_i = j
                 break
 
         if exit_price is None:
             last = data.iloc[-1]
-            last_half_spread = _half_spread(last, default_spread, point_size)
-            exit_price = float(last["close"]) - direction * last_half_spread
+            last_bid = float(last["close"])
+            last_spread = _spread(last, default_spread, point_size)
+            exit_price = last_bid if direction == 1 else last_bid + last_spread
             exit_reason = "end_of_data"
             exit_i = len(data) - 1
 
@@ -120,6 +134,7 @@ def run_backtest(
             "exit_reason": exit_reason,
             "pnl_price": pnl_price,
             "r_multiple": r_multiple,
+            "risk_percent": risk_percent,
             "return_percent_of_risk": r_multiple * risk_percent,
             "signal_reason": reason,
         })
@@ -128,42 +143,60 @@ def run_backtest(
     return pd.DataFrame(trades)
 
 
-def _half_spread(bar: pd.Series, default_spread: float, point_size: float) -> float:
+def _spread(bar: pd.Series, default_spread: float, point_size: float) -> float:
     spread_points = bar.get("spread")
     if spread_points is not None and pd.notna(spread_points):
-        spread = max(0.0, float(spread_points) * point_size)
-    else:
-        spread = default_spread
-    return spread / 2.0
+        return max(0.0, float(spread_points) * point_size)
+    return default_spread
 
 
 def summarize_backtest(trades: pd.DataFrame, *, initial_balance: float = 10_000.0) -> dict:
-    """Return headline metrics from run_backtest output."""
+    """Return trade statistics and compounded equity metrics."""
+    if initial_balance <= 0 or not math.isfinite(initial_balance):
+        raise ValueError("initial_balance must be positive and finite.")
     if trades.empty:
         return {
             "trades": 0, "win_rate_percent": 0.0, "profit_factor": 0.0,
-            "net_r": 0.0, "max_drawdown_r": 0.0,
+            "net_r": 0.0, "max_drawdown_r": 0.0, "max_drawdown_percent": 0.0,
             "ending_balance": initial_balance,
         }
+    if "r_multiple" not in trades.columns or "risk_percent" not in trades.columns:
+        raise ValueError("trades must contain r_multiple and risk_percent columns.")
 
     results = trades["r_multiple"].astype(float)
+    risk_rates = trades["risk_percent"].astype(float)
+    if not results.map(math.isfinite).all():
+        raise ValueError("r_multiple values must be finite.")
+    if not risk_rates.map(lambda value: math.isfinite(value) and 0 < value <= 1).all():
+        raise ValueError("risk_percent values must be in (0, 1] percent.")
+
     wins = results[results > 0]
     losses = results[results < 0]
     gross_profit = float(wins.sum())
     gross_loss = abs(float(losses.sum()))
     profit_factor = gross_profit / gross_loss if gross_loss else (float("inf") if gross_profit else 0.0)
-    equity_r = results.cumsum()
-    peak_r = equity_r.cummax().clip(lower=0)
-    drawdown_r = peak_r - equity_r
-    risk_percent = float(trades["return_percent_of_risk"].iloc[0]) / float(results.iloc[0]) if results.iloc[0] != 0 else 0.01
-    balance = initial_balance
-    for r_value in results:
-        balance *= 1 + ((risk_percent / 100.0) * float(r_value))
+
+    equity = initial_balance
+    peak_equity = initial_balance
+    max_drawdown_percent = 0.0
+    equity_r = 0.0
+    peak_r = 0.0
+    max_drawdown_r = 0.0
+    for r_value, risk_rate in zip(results, risk_rates):
+        equity *= 1.0 + (float(r_value) * float(risk_rate) / 100.0)
+        peak_equity = max(peak_equity, equity)
+        if peak_equity > 0:
+            max_drawdown_percent = max(max_drawdown_percent, (peak_equity - equity) / peak_equity * 100.0)
+        equity_r += float(r_value)
+        peak_r = max(peak_r, equity_r)
+        max_drawdown_r = max(max_drawdown_r, peak_r - equity_r)
+
     return {
         "trades": int(len(trades)),
         "win_rate_percent": float((results > 0).mean() * 100),
         "profit_factor": profit_factor,
         "net_r": float(results.sum()),
-        "max_drawdown_r": float(drawdown_r.max()),
-        "ending_balance": float(balance),
+        "max_drawdown_r": float(max_drawdown_r),
+        "max_drawdown_percent": float(max_drawdown_percent),
+        "ending_balance": float(equity),
     }
