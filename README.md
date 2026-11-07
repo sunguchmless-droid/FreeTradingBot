@@ -1,81 +1,60 @@
 # FreeTradingBot — Forex / MetaTrader 5
 
-A beginner-friendly Python starter project for analysing Forex markets through MetaTrader 5 (MT5).
+A beginner-friendly Python prototype for monitoring Forex through the locally installed MetaTrader 5 terminal.
 
 ## Safety first
 
-- This starter version is **signal-only**. It does not place, modify, or close trades.
-- Use an MT5 demo account for testing.
-- Signals and example indicator rules are educational starting points, not guaranteed profitable strategies.
-- Never add your MT5 password, broker credentials, or account number to GitHub.
+- **Keep `AUTO_DEMO_TRADING=false` until the monitoring loop has been tested.**
+- Order execution and reverse-signal exits are restricted in code to MT5 demo accounts.
+- Demo execution uses a maximum planned risk of 1% of balance per trade, an ATR-based stop-loss, and a 2:1 target.
+- The bot does not guarantee profit. The EMA/RSI rules are educational and are not a proven strategy.
+- Test on a demo account only. Never add MT5 passwords or account details to GitHub.
 
 ## What it does
 
-- Connects to the locally installed MetaTrader 5 terminal.
-- Reads recent candles for a configured symbol and timeframe.
-- Calculates EMA 20, EMA 50, and RSI 14.
-- Prints BUY, SELL, or HOLD with a short explanation.
-- Includes a simple risk-sizing helper for later testing; it does not submit orders.
+- Connects to the locally running MT5 desktop terminal.
+- Reads completed candles for the configured symbol/timeframe.
+- Calculates EMA 20, EMA 50, RSI 14, and ATR 14.
+- Monitors continuously and processes each newly completed candle once.
+- With demo execution explicitly enabled, may place a BUY/SELL demo order with a stop-loss and take-profit.
+- Closes only positions opened with this bot's magic number when an opposite signal appears.
+- Does not close manually opened trades. Existing positions on the same symbol prevent a new entry.
+
+**Important limitations:** This is an early prototype. It does not trail stops, guarantee broker execution, handle every broker's filling policy, or protect against gaps/slippage. Reverse-signal exits are checked only when a new candle completes; the attached SL/TP remain the primary protective orders. Do not use real funds.
 
 ## Requirements
 
-- Windows 10/11 (the official Python `MetaTrader5` package connects to the Windows MT5 terminal)
-- Python 3.10 or 3.11 recommended
-- MetaTrader 5 desktop terminal installed and logged in to a **demo** account
-- A broker symbol available in Market Watch (some brokers use names such as `EURUSD.a`)
+- Windows 10/11
+- Python version supported by the official MetaTrader5 Python package (the tested setup here uses Python 3.14)
+- MetaTrader 5 desktop terminal installed and logged in to a DEMO account
 
 ## Setup
 
-1. Install Python and MetaTrader 5.
-2. Open MT5, sign in to a demo account, and make sure the terminal is running.
-3. In this repository folder, open PowerShell or Command Prompt.
-4. Create and activate a virtual environment:
+1. Open MT5 and log in to your demo account. Keep it running.
+2. Open this project folder in Command Prompt.
+3. Create and activate a virtual environment:
+   `py -3.14 -m venv .venv`
+   `.venv\\Scripts\\activate`
+4. Install dependencies:
+   `python -m pip install --upgrade pip`
+   `pip install -r requirements.txt`
+5. Copy `.env.example` to `.env`.
+6. First run with `AUTO_DEMO_TRADING=false`:
+   `python -m src.main`
+7. The program keeps running. Press **CTRL+C** to stop it.
 
-   ```powershell
-   py -3.11 -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   ```
+## Configuration
 
-   If PowerShell blocks activation, use Command Prompt and run:
-   ```bat
-   .venv\Scripts\activate.bat
-   ```
+- `MT5_SYMBOL=EURUSD`
+- `MT5_TIMEFRAME=M15`
+- `MT5_BARS=300`
+- `POLL_SECONDS=5` (how often the terminal is checked; signals are still processed only once per completed candle)
+- `AUTO_DEMO_TRADING=false` (safe default; do not change until the loop is reviewed and tested)
 
-5. Install dependencies:
+## Signal rules
 
-   ```powershell
-   python -m pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
-
-6. Copy `.env.example` to `.env` and adjust the symbol/timeframe if needed. Keep `.env` private.
-7. Run:
-
-   ```powershell
-   python -m src.main
-   ```
-
-## Initial strategy (for learning and backtesting)
-
-- BUY candidate: EMA 20 is above EMA 50 and RSI is between 50 and 70.
-- SELL candidate: EMA 20 is below EMA 50 and RSI is between 30 and 50.
+- BUY candidate: EMA 20 above EMA 50 and RSI between 50 and 70.
+- SELL candidate: EMA 20 below EMA 50 and RSI between 30 and 50.
 - Otherwise: HOLD.
 
-This is deliberately basic. It does not account for spread, slippage, news, swaps, or broker execution conditions. Do not treat a signal as a recommendation to trade.
-
-## Project layout
-
-- `src/mt5_data.py` — connection and candle retrieval
-- `src/indicators.py` — EMA and RSI calculations
-- `src/signals.py` — transparent signal rules
-- `src/risk.py` — educational position-size calculation
-- `src/main.py` — runs one analysis cycle
-
-## Next milestones
-
-1. Confirm your broker's exact symbol names and test the MT5 connection.
-2. Add historical backtesting with spread and commission assumptions.
-3. Add paper/demo order execution only after reviewing backtest results.
-4. Add live trading only as a separate, explicitly enabled feature with strict limits.
-
-No profit is guaranteed. Test thoroughly before considering real funds.
+These simple rules do not account for all market conditions, spread, slippage, news, swaps, or broker execution differences.
