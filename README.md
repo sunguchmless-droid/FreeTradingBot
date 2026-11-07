@@ -22,6 +22,23 @@ A beginner-friendly Python prototype for monitoring Forex through the locally in
 
 **Important limitations:** This is an early prototype. It does not trail stops, guarantee broker execution, handle every broker's filling policy, or protect against gaps/slippage. Reverse-signal exits are checked only when a new candle completes; the attached SL/TP remain the primary protective orders. Do not use real funds.
 
+## Historical backtesting (no orders)
+
+The historical backtest downloads past candles from the MT5 terminal and writes a trade CSV plus a summary JSON. It does not place, modify, or close any orders.
+
+1. Open MetaTrader 5 and log in to your demo account. Keep it running.
+2. In Command Prompt, open the project folder and activate your virtual environment.
+3. Make sure dependencies are installed with `pip install -r requirements.txt`.
+4. Run a two-year EURUSD M15 test (dates are UTC):
+
+   `python -m scripts.run_backtest --symbol EURUSD --timeframe M15 --start 2024-01-01 --end 2026-11-06`
+
+5. Open the `backtest_results` folder to see the CSV trade list and JSON summary.
+
+MT5 may only return the history currently available in its terminal. If the result contains too few candles, open the EURUSD chart in MT5, scroll back to load more history, and run the same command again. Check the exact symbol name in Market Watch; some brokers use a suffix.
+
+The simulator assumes MT5 OHLC prices are BID prices and uses the historical candle spread column when available. The fallback spread is 0.0001 price units (roughly one pip for EURUSD) when that column is unavailable. Spread history may not capture all execution costs, including commission, swaps, and slippage.
+
 ## Requirements
 
 - Windows 10/11
