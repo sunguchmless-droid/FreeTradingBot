@@ -23,4 +23,12 @@ def add_indicators(candles: pd.DataFrame) -> pd.DataFrame:
     data["rsi_14"] = 100 - (100 / (1 + relative_strength))
     data.loc[(average_loss == 0) & (average_gain > 0), "rsi_14"] = 100
     data.loc[(average_loss == 0) & (average_gain == 0), "rsi_14"] = 50
+
+    previous_close = data["close"].shift(1)
+    true_range = pd.concat([
+        data["high"] - data["low"],
+        (data["high"] - previous_close).abs(),
+        (data["low"] - previous_close).abs(),
+    ], axis=1).max(axis=1)
+    data["atr_14"] = true_range.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
     return data
