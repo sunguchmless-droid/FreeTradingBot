@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from src.backtest import run_backtest, summarize_backtest
 
@@ -15,7 +16,7 @@ def test_enters_on_next_candle_and_hits_take_profit():
     trades = run_backtest(candles, default_spread=0)
     assert len(trades) == 1
     assert trades.iloc[0]["exit_reason"] == "take_profit"
-    assert trades.iloc[0]["r_multiple"] == 2.0
+    assert trades.iloc[0]["r_multiple"] == pytest.approx(2.0)
 
 
 def test_stop_loss_wins_if_stop_and_target_hit_same_candle():
@@ -25,7 +26,7 @@ def test_stop_loss_wins_if_stop_and_target_hit_same_candle():
     ])
     trades = run_backtest(candles, default_spread=0)
     assert trades.iloc[0]["exit_reason"] == "stop_loss"
-    assert trades.iloc[0]["r_multiple"] == -1.0
+    assert trades.iloc[0]["r_multiple"] == pytest.approx(-1.0)
 
 
 def test_hold_signal_creates_no_trade():
